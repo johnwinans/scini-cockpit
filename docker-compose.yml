@@ -2,18 +2,17 @@ version: "3"
 services:
 
   openrov:
-    build: openrov/
+    image: scini/openrov:build-20181109
     restart: always
-    network_mode: "host"
     command: 192.168.2.215
     cap_add:
       - SYS_NICE
     volumes:
-      - "cockpit:/opt/openrov/cockpit"
-      - "images:/opt/openrov/images"
-      - "logs:/opt/openrov/logs"
-      - "www:/opt/openrov/www"
-      - "data:/opt/openrov/data"
+      - "./assets/www:/opt/openrov/www"
+      - "./assets/www-ro:/opt/openrov/www-ro"
+      - "./assets/mqttConfig.json:/opt/openrov/config/mqttConfig.json"
+      - "./assets/rovconfig.json:/tmp/rovconfig.json"
+      - "./assets/adjustments.prod.json:/opt/openrov/cockpit/src/lib/adjustments.json"
     ports:
       - "80:80"
       - "443:443"
@@ -21,21 +20,35 @@ services:
       - "3000:3000"
       - "7011:7011"
       - "8080:8080"
+      - "8100:8100"
+      - "8101:8101"
+      - "8102:8102"
+      - "8103:8103"
+      - "8104:8104"
       - "8200:8200"
       - "8201:8201"
       - "8202:8202"
       - "8203:8203"
       - "8204:8204"
       - "8300:8300"
+      - "9000:9000"
       - "9229:9229"
     logging:
       options:
         max-size: "1000k"
         max-file: "10"
 
-volumes:
-  cockpit:
-  images:
-  logs:
-  www:
-  data:
+  file-browser:
+    image: coderaiser/cloudcmd
+    restart: always
+    environment:
+      - PORT=8000
+      - CLOUDCMD_ROOT=/opt/openrov/
+    ports:
+      - "8000:8000"
+    volumes:
+      - "./assets:/opt/openrov/assets:rw"
+    logging:
+      options:
+        max-size: "500k"
+        max-file: "10"

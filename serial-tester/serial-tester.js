@@ -1,29 +1,22 @@
-#!/root/.nvm/versions/node/v8.11.2/bin/node --inspect
+#!/root/.nvm/versions/node/v8.12.0/bin/node
 
-const pro4 = require('./pro4');
-const SerialPort = require('serialport');
-const logger = require('pino')();
-const EventEmitter = require('events');
+const pro4          = require('./pro4');
+const syslog        = require('syslog-client');
+const logger        = syslog.createClient('logger');
+const EventEmitter  = require('events');
 
-logger.level = 'debug';
-
-let mockNodeIds = [];
+let filterList = [];
 if (process.env.hasOwnProperty('NODEIDS'))
 {
-  mockNodeIds = process.env['NODEIDS'].split(' ');
-  for (let i = 0; i < mockNodeIds.length; i++)
-  {
-    mockNodeIds[i] = +mockNodeIds[i]; // convert string to int
-  }
+  filterList = process.env['NODEIDS'].split(/\s+/);
 }
 else
 {
-  logger.debug('Missing space separated list of NODEIDS in environment variable');
-  logger.debug('Example: export NODEIDS="14 15 16"');
-  logger.debug('Exiting...');
+  logger.log('Missing space separated list of NODEIDS in environment variable');
+  logger.log('Example: export NODEIDS="14 15 16"');
+  logger.log('Exiting...');
   process.exit(1);
 }
-
 
 class serialTester extends EventEmitter
 {
@@ -34,10 +27,15 @@ class serialTester extends EventEmitter
 
     // event listeners
     this.on('error', (e) => {
-      logger.debug('Error: ', e.message);
+      logger.log(`Error: ${e.message}`);
     });
+    // only called on requests from MQTT to subscribed topics
+    // filter out PRO4 IDs not in process.env['NODEIDS']
     this.on('parsedPacket', function(parsedObj) {
-      this.sendUpstream(parsedObj);
+      if (filterList.indexOf(parsedObj.id.toString()) !== -1) {
+        logger.log(`sendUpstream = ${parsedObj.id}`);
+        this.sendUpstream(parsedObj);
+      }
     });
 
     // *********** SCINI specific platform hardware request state *************
@@ -78,7 +76,7 @@ class serialTester extends EventEmitter
       },
       pro4:             {
         pro4Sync:       pro4.constants.SYNC_REQUEST8LE,
-        pro4Addresses:  [0x31,0x32,0x33,0x41,0x42,0x43],
+        pro4Addresses:  [42, 51, 52],
         flags:          0x00,       // or 0x80
         csrAddress:     0xf0,       // custom command address
         lenNoop:        6,          // no write, just read all values
@@ -109,7 +107,7 @@ class serialTester extends EventEmitter
       power:            0,          // 0 to 1
       pro4:             {
         pro4Sync:       pro4.constants.SYNC_REQUEST32LE,
-        pro4Addresses:  [64], // all updated at same time
+        pro4Addresses:  [65, 66], // all updated at same time
         flags:          2,          // defined by VideoRay
         csrAddress:     0,          // custom command address
         len:            4 * 3       // 3 led banks
@@ -141,23 +139,23 @@ class serialTester extends EventEmitter
       grippers:         [
         {
           name:         "Gripper 1",
-          nodeId:       0x27,  // PRO4 packet ID
+          nodeId:       24,  // PRO4 packet ID
           state:        0      // 0 (stop), 2 (close), 3 (open)
         },
         {
           name:         "Gripper 2 - water sampler",
-          nodeId:       0x62,   // PRO4 packet ID
+          nodeId:       23,   // PRO4 packet ID
           state:        0       // 0 (stop), 2 (close), 3 (open)
         },
         {
           name:         "Gripper 3 - trim",
-          nodeId:       0x63,  // PRO4 packet ID
+          nodeId:       21,  // PRO4 packet ID
           state:        0      // 0 (stop), 2 (close), 3 (open)
         }
       ],
       pro4:             {
         pro4Sync:       pro4.constants.SYNC_REQUEST8LE,
-        pro4Addresses:  [0x61, 0x62, 0x63], // all updated at same time
+        pro4Addresses:  [24, 23, 21], // all updated at same time
         flags:          0x80,  // defined by VideoRay
         csrAddress:     0,     // custom command address
         len:            1      // command payload is just a single byte
@@ -241,9 +239,13 @@ class serialTester extends EventEmitter
     // pass length of motors array for dynamic parser length field
     this.parser = new pro4.Pro4(this.motorControl.motors.length, this);
 
+    // used for simulated device data
+    this.rand = 0.213;
+    this.randomInterval = setInterval( () => { this.rand = Math.random(); }, 100);
+    this.tempIdx = 0;
     this.tiltIdx = 0;
-    this.pressure = 1000000;
-    this.pressureInc = 10000;
+    this.pressure = 10;
+    this.pressureInc = 0.1;
   }
 
   updateGrippers(parsedObj)
@@ -258,8 +260,8 @@ class serialTester extends EventEmitter
       cmd: 0,
       cmdStatus: 0,
       lim_i: 0,
-      current: 0,
-      temp: 0,
+      current: (scini.rand * 5.0 + 1.0).toFixed(2),
+      temp: (scini.rand * 3.0 + 35.0).toFixed(2),
       devAddress: 0,
       firmwareVersion: 0
     }
@@ -276,8 +278,8 @@ class serialTester extends EventEmitter
 
     let ret = {
       deviceType: 0,
-      bus_v: 0,
-      bus_i: 0,
+      bus_v: (scini.rand * (48.3 - 48.0) + 48.0).toFixed(2),
+      bus_i: (scini.rand * (1.58 - 0.1) + 0.1).toFixed(2),
       fault: 0
     }
     return {h: header, payload: scini.parser.ParserLights.encode(ret)};
@@ -293,9 +295,9 @@ class serialTester extends EventEmitter
 
     let ret = {
       deviceType: 0,
-      rpm: 0,
-      bus_v: 0,
-      bus_i: 0,
+      rpm: (scini.rand * (2000.0 - 50.0) + 50.0).toFixed(2),
+      bus_v: (scini.rand * (48.3 - 48.0) + 48.0).toFixed(2),
+      bus_i: (scini.rand * (1.58 - 0.1) + 0.1).toFixed(2),
       fault: 0
     }
     return {h: header, payload: scini.parser.ParserMotors.encode(ret)};
@@ -310,62 +312,53 @@ class serialTester extends EventEmitter
     header.flags = parsedObj.flags;
     header.csrAddress = parsedObj.csrAddress;
 
-    // update pressure mock value
-    // change to match sensor quantities - currently pascals
-    let pressureMin = 1000000;
-    let pressureMax = 15000000;
-    if (scini.pressure === pressureMin)
-      scini.pressureInc = 10000;
-    else if (scini.pressure === pressureMax)
-      scini.pressureInc = -10000;
-    else if (scini.pressure < pressureMin || scini.pressure > pressureMax) { // error
-      scini.pressureInc = 10000;
-      scini.pressure = 1000000;
-    }
-    scini.pressure += scini.pressureInc;
-
     let wave = [1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,0,-0.1,-0.2,-0.3,-0.4,-0.5,-0.6,-0.7,-0.8,-0.9,-1.0,-1.1,-1.2,-1.3,-1.4];
     let tilt = Math.sin(wave[scini.tiltIdx])*180/Math.PI;
-    if (scini.tiltIdx == wave.length-1)
-    {
-      scini.tiltIdx = 0;
+    if (parsedObj.id == 52) {
+      if (scini.tiltIdx == wave.length-1)
+      {
+        scini.tiltIdx = 0;
+      }
+      else
+        scini.tiltIdx++;
     }
-    else
-      scini.tiltIdx++;
 
     let ret = {
       scni: 'SCNI',
-      len: 0,
+      len: 80,
       cmd: 0,
       servo1: 0,
       servo2: 0,
       gpioOut: 0,
       gpioIn: 0,
-      acs764: [0, 0, 0, 0],
-      tmp102: [0, 0, 0, 0],
-      adcKelvin: [0, 0],
-      adcVolts: [0, 0, 0],
-      adc48v: 0,
-      adc24v: 0,
-      adc12v: 0,
-      kellerTemperature: 0,
-      kellerPressure: scini.pressure,
-      kellerStatus: 0,
+      acs764: [scini.rand + 5.0, scini.rand + 5.0, scini.rand + 5.0, scini.rand + 5.0],
+      tmp102: [scini.rand + 50.0, scini.rand + 50.0, scini.rand + 50.0, scini.rand + 50.0],
+      adcKelvin: [scini.rand + 500.0, scini.rand + 500.0],
+      adcVolts: [scini.rand + 48.0, scini.rand + 48.0, scini.rand + 48.0],
+      adc48v: scini.rand + 48.0,
+      adc24v: scini.rand + 24.0,
+      adc12v: scini.rand + 12.0,
+      kellerTemperature: scini.rand + 50.0,
+      kellerPressure: scini.rand + 8.0,
+      kellerStatus: 64,
       pad: 0,
       accel_x: 0,
       accel_y: 0,
       accel_z: 0,
-      angle_x: tilt,
-      angle_y: tilt,
+      angle_x: tilt.toFixed(0),
+      angle_y: tilt.toFixed(0),
       angle_z: 0,
       rot_x: 0,
       rot_y: 0,
-      rot_z: 0
+      rot_z: 0,
+      uptimeMillis: (scini.rand * 16384 + 16384).toFixed(0),
+      imuPressure: (scini.rand * 16384 + 16384).toFixed(0),
+      imuTemp: (scini.rand * 16384 + 16384).toFixed(0)
     }
     return {h: header, payload: scini.parser.ParserBam.encode(ret)};
   }
 
-  updateSensors(parsedObj)
+  updateKeller(parsedObj)
   {
     let header = {};
     header.sync = pro4.constants.SYNC_RESPONSE8BE;
@@ -373,36 +366,119 @@ class serialTester extends EventEmitter
     header.flags = parsedObj.flags;
     header.csrAddress = parsedObj.csrAddress;
 
-    let ret = {
-      scni: 'SCNI',
-      len: 0,
-      cmd: 0,
-      servo1: 0,
-      servo2: 0,
-      gpioOut: 0,
-      gpioIn: 0,
-      acs764: [0, 0, 0, 0],
-      tmp102: [0, 0, 0, 0],
-      adcKelvin: [0, 0],
-      adcVolts: [0, 0, 0],
-      adc48v: 0,
-      adc24v: 0,
-      adc12v: 0,
-      kellerTemperature: 0,
-      kellerPressure: 0,
-      kellerStatus: 0,
-      pad: 0,
-      accel_x: 0,
-      accel_y: 0,
-      accel_z: 0,
-      angle_x: 0,
-      angle_y: 0,
-      angle_z: 0,
-      rot_x: 0,
-      rot_y: 0,
-      rot_z: 0
+    // update pressure mock value
+    // change to match sensor quantities - currently bar;
+    let pressureMin = 10;
+    let pressureMax = 150;
+    if (scini.pressure === pressureMin)
+      scini.pressureInc = 0.1;
+    else if (scini.pressure === pressureMax)
+      scini.pressureInc = -0.1;
+    else if (scini.pressure < pressureMin || scini.pressure > pressureMax) { // error
+      scini.pressureInc = 0.1;
+      scini.pressure = 10;
     }
-    return {h: header, payload: scini.parser.ParserBam.encode(ret)};
+    scini.pressure += scini.pressureInc;
+
+    let wave = [1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,0,-0.1,-0.2,-0.3,-0.4,-0.5,-0.6,-0.7,-0.8,-0.9,-1.0,-1.1,-1.2,-1.3,-1.4];
+    if (scini.tempIdx == wave.length-1)
+    {
+      scini.tempIdx = 0;
+    }
+    else
+      scini.tempIdx++;
+
+    let ret = {
+      cmd: 4,
+      uptime: 0,
+      status: 0x40,
+      pressure: scini.pressure,
+      temp: wave[scini.tempIdx]
+    }
+    return {h: header, payload: scini.parser.ParserKeller.encode(ret)};
+  }
+
+  updateBoard44(parsedObj)
+  {
+    let ret;
+    let retObj;
+    let header = {};
+    header.sync = pro4.constants.SYNC_RESPONSE8BE;
+    header.id = parsedObj.id;
+    header.flags = parsedObj.flags;
+    header.csrAddress = parsedObj.csrAddress;
+
+    // Simulate CT sensor response
+    let counter = (scini.rand * 32768 + 32768).toFixed(0);
+    let temp = (scini.rand * 3.0).toFixed(3);
+    let conductivity = (scini.rand * 2.0 + 49.0).toFixed(3); // device unit is mS/cm
+    if (parsedObj.device.cmd === 3) {
+      ret = {
+        cmd: 3,
+        ct: `${counter}\t${temp}\t${conductivity}\r\n`
+      };
+      retObj = {h: header, payload: scini.parser.ParserCtsensor.encode(ret)};
+    }
+    // Simulate Keller response
+    else if (parsedObj.device.cmd === 4) {
+      // update pressure mock value
+      // change to match sensor quantities - currently bar;
+      let pressureMin = 10;
+      let pressureMax = 150;
+      if (scini.pressure === pressureMin)
+        scini.pressureInc = 0.1;
+      else if (scini.pressure === pressureMax)
+        scini.pressureInc = -0.1;
+      else if (scini.pressure < pressureMin || scini.pressure > pressureMax) { // error
+        scini.pressureInc = 0.1;
+        scini.pressure = 10;
+      }
+      scini.pressure += scini.pressureInc;
+
+      let wave = [1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,0,-0.1,-0.2,-0.3,-0.4,-0.5,-0.6,-0.7,-0.8,-0.9,-1.0,-1.1,-1.2,-1.3,-1.4];
+      if (scini.tempIdx == wave.length-1)
+      {
+        scini.tempIdx = 0;
+      }
+      else
+        scini.tempIdx++;
+      ret = {
+        cmd: 4,
+        uptime: 0,
+        status: 0x40,
+        pressure: scini.pressure,
+        temp: wave[scini.tempIdx]
+      };
+      retObj = {h: header, payload: scini.parser.ParserKeller.encode(ret)};
+    }
+    // board44 BAM
+    else if (parsedObj.device.cmd === 6) {
+      ret = {
+        cmd: 6,
+        uptime: 0,
+        status: 0x40,
+        pressure: scini.rand + 8.0,
+        minPressure: 1.0,
+        maxPressure: 10.0,
+        kellerCust0: scini.rand,
+        kellerCust1: scini.rand,
+        kellerScale0: scini.rand + 3.0,
+        acs764n1: scini.rand * 0.3 + 48.0,
+        acs764n2: scini.rand * 0.3 + 12.0,
+        acs764n3: scini.rand * 0.6 + 48.0,
+        acs764n4: scini.rand * 0.3 + 24.0,
+        adc0: scini.rand * 0.3 + 5.0,  // not used
+        adc1: scini.rand + 3.0,        // temp K/100 on 24v PS side
+        adc2: scini.rand * 0.3 + 5.0,
+        adc3: scini.rand * 0.3 + 5.0,  // not used
+        adc4: scini.rand * 0.3 + 48.0,
+        adc5: scini.rand * 0.3 + 24.0,
+        adc6: scini.rand * 0.3 + 12.0,
+        adc7: scini.rand * 0.3 + 3.0   // temp K/100 on 12v PS side
+      };
+      retObj = {h: header, payload: scini.parser.ParserBoard44Bam.encode(ret)};
+    }
+    return retObj;
   }
 
   async sendUpstream(parsedObj)
@@ -412,65 +488,114 @@ class serialTester extends EventEmitter
     {
       let funcMap = {
         pilot: scini.updateNav,
-        sensors: scini.updateSensors,
+        sensors: scini.updateNav,
         lights: scini.updateLights,
         motors: scini.updateMotors,
-        grippers: scini.updateGrippers
+        gripper: scini.updateGrippers,
+        waterSampler: scini.updateGrippers,
+        trim: scini.updateGrippers,
+        keller: scini.updateKeller,
+        board44: scini.updateBoard44
       }
 
       if (funcMap.hasOwnProperty(parsedObj.type))
       {
         try
         {
-          resp = await funcMap[parsedObj.type](parsedObj);
+          resp = funcMap[parsedObj.type](parsedObj);
           // get final packet to return
           let packetBuf = await scini.parser.encode(resp.h.sync, resp.h.id, resp.h.flags, resp.h.csrAddress, resp.payload.length, resp.payload);
-          port.write(packetBuf, function(err) {
-            if (err) {
-              return logger.debug('Error on write: ', err.message);
+          if (process.env.STANDALONE === 'true') {
+            scini.parser.parseBuf.writeBuffer(packetBuf);
+            let respObj = await scini.parser.parse(packetBuf.length, true);
+            console.log(`sync1 = ${respObj.sync1}, sync2= ${respObj.sync2}, id = ${respObj.id}, flags = ${respObj.flags}, csr = ${respObj.csrAddress}, len = ${respObj.payloadLen}, crcHead = ${respObj.crcHead}, crcTotal = ${respObj.crcTotal}, type = ${respObj.type}`);
+            console.dir(respObj.device);
+          }
+          else {
+            // simulate variable embedded response delays
+            // plus base delay of 5ms
+            // small chance of splitting packetBuf into 2 parts before sending
+            if (Math.random() < 0.04) {
+              let l = Math.floor(packetBuf.length/2);
+              let buf1 = packetBuf.slice(0, l);
+              let buf2 = packetBuf.slice(l, packetBuf.length);
+              setTimeout(function() {
+                process.stdout.write(buf1, function(err) {
+                  if (err) {
+                    return logger.log(`Error on write: ${err.message}`);
+                  }
+                  else {
+                    // write remaining packetBuf with another base delay
+                    setTimeout(function() {
+                      process.stdout.write(buf2, function(err) {
+                        if (err) {
+                          return logger.log(`Error on write: ${err.message}`);
+                        }
+                      })
+                    }, Math.random() + 5);
+                  }
+                })
+              }, Math.random()*70 + 5);
             }
-          });
+            else {
+              // send in one packet
+              setTimeout(function() {
+                process.stdout.write(packetBuf, function(err) {
+                  if (err) {
+                    return logger.log(`Error on write: ${err.message}`);
+                  }
+                })
+              }, Math.random()*70 + 5);
+            }
+          }
         }
         catch(e)
         {
-          logger.debug('BRIDGE: Payload parsing error = ', e.message, '; obj = ', parsedObj);
+          logger.log(`SERIAL: Payload parsing error = ${e.message}`);
+          logger.log(e.stack);
           parsedObj.status = pro4.constants.STATUS_ERROR;
         }
       }
     }
     else if (parsedObj.status === pro4.constants.STATUS_MOREDATA)
     {
-      logger.debug('BRIDGE: Waiting for more data');
+      logger.log('SERIAL: Waiting for more data');
     }
 
     // don't use else if to support fall through changing status conditions during processing
     if (parsedObj.status === pro4.constants.STATUS_ERROR)
     {
-      logger.debug('BRIDGE: Error in PRO4 message parser; data = ', parsedObj.data.toString('hex'));
+      logger.log(`SERIAL: Error in PRO4 message parser; data = ${parsedObj.toString('hex')}`);
     }
 
     // well, kinda ugly for now but this needs to get done
     // invalid status
     if ([pro4.constants.STATUS_ERROR,pro4.constants.STATUS_MOREDATA,pro4.constants.STATUS_SUCCESS].indexOf(parsedObj.status) === -1)
     {
-      logger.debug('BRIDGE: Invalid PRO4 parser status = ', parsedObj.status);
+      logger.log(`SERIAL: Invalid PRO4 parser status = ${parsedObj.status}`);
     }
   };
 
 } // end class serialTester
 
 const scini = new serialTester();
-const port = new SerialPort(process.env.PTY, {
-  baudRate: 115200
-});
+
+// if STANDALONE='true', accept a hex string on stdin, process that and
+// send it through parsing for easier troubleshooting than inside container
+if (process.env.STANDALONE === 'true') {
+  logger.log('SERIAL: Running in standalone mode');
+  process.stdin.pipe(require('split')());
+}
 
 // Open errors will be emitted as an error event
-port.on('error', (e) => {
-  logger.debug('SERIAL: Error = ', e.message);
+process.stdin.on('error', (e) => {
+  logger.log(`SERIAL: Error = ${e.message}`);
   process.exit(1);
 });
 
-// Switches the port into "flowing mode"
-port.on('data', (data) => {
+process.stdin.on('data', (data) => {
+  if (process.env.STANDALONE === 'true') {
+    data = Buffer.from(data.toString('utf8'), 'hex');
+  }
   scini.parser.emit('receivedSerialData', data);
 });

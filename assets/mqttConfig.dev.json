@@ -1,0 +1,12 @@
+{
+    "192.168.2.211": {
+        "id": "",
+        "location": "clump",
+        "receiveMqtt": true
+    },
+    "192.168.2.215": {
+        "id": "",
+        "location": "rov",
+        "receiveMqtt": true
+    }
+}

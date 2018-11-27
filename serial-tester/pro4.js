@@ -31,8 +31,8 @@
   POSSIBILITY OF SUCH DAMAGE.
 */
 
-//const logger        = require('AppFramework.js').logger;
-const logger        = require('pino')();
+const syslog        = require('syslog-client');
+const logger        = syslog.createClient('logger');
 const Parser        = require('binary-parser-encoder').Parser;
 const StateMachine  = require('javascript-state-machine');
 const CRC           = require('crc');
@@ -137,11 +137,10 @@ class Pro4 extends EventEmitter
     // event listeners
     this.on('receivedSerialData', function(data) {
       this.receivedSerialData(data)});
-    // arrow function to reference parent context
     this.on('parseSerialData', function(length) {
-      this.parse(length)});
+      this.parse(length, false)});
     this.on('error', function(e) {
-      logger.debug('PRO4: Error = ', e.message);
+      logger.log(`PRO4: Error = ${e.message}`);
     });
 
     // VideoRay PRO4 thruster request payload
@@ -178,11 +177,11 @@ class Pro4 extends EventEmitter
       .floatle('temp')
       .uint8('fault');
 
-    // VideoRay PRO4 light module request payload
+    // VideoRay PRO4 gripper module request payload
     this.ParserGrippersReq = new Parser()
       .uint8('cmd')
 
-    // VideoRay PRO4 light module response payload
+    // VideoRay PRO4 gripper module response payload
     this.ParserGrippers = new Parser()
       .uint8('cmd')
       .uint8('cmdStatus')
@@ -191,6 +190,86 @@ class Pro4 extends EventEmitter
       .uint16be('temp')
       .uint8('devAddress')
       .uint32be('firmwareVersion');
+
+    // VideoRay PRO4 light module response payload
+    this.ParserLaser = new Parser()
+      .uint8('cmd')
+      .uint32le('uptime')
+      .uint8('status')
+      .floatle('pressure')
+      .floatle('temp');
+
+    // CT Sensor module response payload
+    this.ParserCtsensorReq = Parser.start()
+      .string('ct', {
+        encoding: 'ascii',
+        greedy: true
+      });
+
+    this.stop = new Parser();
+    // Board44 keller request payload
+    this.ParserBoard44Req = new Parser()
+      .uint8('cmd')
+      .choice({
+        tag: 'cmd',
+        choices: {
+          3: this.ParserCtsensorReq,
+          4: this.stop,
+          6: this.stop
+        }
+      });
+
+    // Keller sensor module response payload
+    this.ParserKeller = Parser.start()
+      .uint8('cmd')
+      .uint32le('uptime')
+      .uint8('status')
+      .floatle('pressure')
+      .floatle('temp');
+
+    // CT Sensor module response payload
+    this.ParserCtsensor = Parser.start()
+      .uint8('cmd')
+      .string('ct', {
+        encoding: 'ascii',
+        greedy: true
+      });
+
+    // Board 44 BAM data status response payload
+    this.ParserBoard44Bam = Parser.start()
+      .uint8('cmd')
+      .uint32le('uptime')
+      .uint8('status')
+      .floatle('pressure')
+      .floatle('minPressure')
+      .floatle('maxPressure')
+      .uint16le('kellerCust0')
+      .uint16le('kellerCust1')
+      .uint16le('kellerScale0')
+      .floatle('acs764n1')
+      .floatle('acs764n2')
+      .floatle('acs764n3')
+      .floatle('acs764n4')
+      .floatle('adc0')
+      .floatle('adc1')
+      .floatle('adc2')
+      .floatle('adc3')
+      .floatle('adc4')
+      .floatle('adc5')
+      .floatle('adc6')
+      .floatle('adc7');
+
+    // PRO4 translator 44 board
+    this.ParserBoard44 = new Parser()
+      .uint8('cmd')
+      .choice('data', {
+        tag: 'cmd',
+        choices: {
+          3: this.ParserCtsensor,
+          4: this.ParserKeller,
+          6: this.ParserBoard44Bam
+        }
+      });
 
     // SCINI crumb644 PRO4 request payload
     // Pre-IMU payload
@@ -237,9 +316,9 @@ class Pro4 extends EventEmitter
       .uint8('pad')
 
     // SCINI crumb644 PRO4 request payload
-    this.ParserBamReqNoop = new Parser()
+    this.ParserBamReqNoop = Parser.start()
       .uint8('cmd') // 0 = read?; 1 = read?; 2 = BAM; 0x40 = error string in payload (implemented?)
-    this.ParserBamReqFull = new Parser()
+    this.ParserBamReqFull = Parser.start()
       .uint8('cmd') // 0 = read?; 1 = read?; 2 = BAM; 0x40 = error string in payload (implemented?)
       .uint16le('servo1')
       .uint16le('servo2')
@@ -296,6 +375,9 @@ class Pro4 extends EventEmitter
       .int16le('rot_x')
       .int16le('rot_y')
       .int16le('rot_z')
+      .uint32le('uptimeMillis')
+      .int32le('imuPressure')
+      .int16le('imuTemp')
 
     this.fsm = this.createStateMachine();
   };
@@ -303,14 +385,14 @@ class Pro4 extends EventEmitter
   receivedSerialData(data)
   {
     // smart-buffer should keep track of write cursor
-    logger.debug('PRO4: Received serial data');
+    logger.log('PRO4: Received serial data');
     this.parseBuf.writeBuffer(data);
     this.emit('parseSerialData', this.parseBuf.length);
   }
 
   fsmEnterHandler(event, from, to)
   {
-    logger.debug('PRO4: Parser moved from ' + from + ' to ' + to);
+    logger.log(`PRO4: Parser moved from ${from} to ${to}`);
   };
 
   createStateMachine()
@@ -440,18 +522,6 @@ class Pro4 extends EventEmitter
         this.parsedObj.type = 'motors';
         return await this.ParserMotorsReq.parse(this.parsedObj.payload);
       }
-      case 42:
-      {
-        this.parsedObj.type = 'sensors';
-        if (this.request == 0)
-        {
-          return await this.ParserBam.parse(this.parsedObj.payload);
-        }
-        else
-        {
-          return await this.ParserBamReq.parse(this.parsedObj.payload);
-        }
-      }
       case 51:
       {
         this.parsedObj.type = 'sensors';
@@ -467,6 +537,30 @@ class Pro4 extends EventEmitter
       case 52:
       {
         this.parsedObj.type = 'pilot';
+        if (this.request == 0)
+        {
+          return await this.ParserBam.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBamReq.parse(this.parsedObj.payload);
+        }
+      }
+      case 57:
+      {
+        this.parsedObj.type = 'sensors';
+        if (this.request == 0)
+        {
+          return await this.ParserBam.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBamReq.parse(this.parsedObj.payload);
+        }
+      }
+      case 58:
+      {
+        this.parsedObj.type = 'sensors';
         if (this.request == 0)
         {
           return await this.ParserBam.parse(this.parsedObj.payload);
@@ -548,6 +642,114 @@ class Pro4 extends EventEmitter
           return await this.ParserLightsReq.parse(this.parsedObj.payload);
         }
       }
+      case 67:
+      {
+        this.parsedObj.type = 'sensors';
+        if (this.request == 0)
+        {
+          return await this.ParserBam.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBamReq.parse(this.parsedObj.payload);
+        }
+      }
+      case 81:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 82:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 83:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 84:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 85:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 86:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 87:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
+      case 88:
+      {
+        this.parsedObj.type = 'board44';
+        if (this.request == 0)
+        {
+          return await this.ParserBoard44.parse(this.parsedObj.payload);
+        }
+        else
+        {
+          return await this.ParserBoard44Req.parse(this.parsedObj.payload);
+        }
+      }
       case 24:
       {
         this.parsedObj.type = 'gripper';
@@ -593,7 +795,7 @@ class Pro4 extends EventEmitter
   }
 
   // Decode PRO4 response, calculate checksum, and pass to device parser
-  async parse(length)
+  async parse(length, returnObject)
   {
     let self = this;
 
@@ -620,7 +822,7 @@ class Pro4 extends EventEmitter
           }
           else
           {
-            logger.debug('PRO4: Invalid PRO4 ', self.request == 1 ? 'request':'response',' at byte = ', byte, 'state = ', self.fsm.current);
+            logger.log(`PRO4: Invalid PRO4 ${self.request == 1 ? 'request':'response'} at byte = ${byte} state = ${self.fsm.current}`);
             let cursor = self.parseBuf.readOffset;
             self.parseBuf.readOffset = 0;
             this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -634,7 +836,7 @@ class Pro4 extends EventEmitter
         {
           let byte = self.parseBuf.readUInt8();
           if ((byte == self.constants.SYNC_RESPONSE8_b2 && self.parsedObj.sync1 == self.constants.SYNC_RESPONSE8_b1) ||
-              (byte == self.constants.SYNC_RESPONSE32_b2 && self.parsedObj.sync1 == self.constants.SYNC_RESPONSE32_b1))
+          (byte == self.constants.SYNC_RESPONSE32_b2 && self.parsedObj.sync1 == self.constants.SYNC_RESPONSE32_b1))
           {
             self.parsedObj.sync2 = byte;
             self.headBuf[1] = self.parsedObj.sync2;
@@ -647,7 +849,7 @@ class Pro4 extends EventEmitter
           }
           else
           {
-            logger.debug('PRO4: Invalid PRO4 ', self.request == 1 ? 'request':'response',' at byte = ', byte, 'state = ', self.fsm.current);
+            logger.log(`PRO4: Invalid PRO4 ${self.request == 1 ? 'request':'response'} at byte = ${byte} state = ${self.fsm.current}`);
             let cursor = self.parseBuf.readOffset;
             self.parseBuf.readOffset = 0;
             this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -669,7 +871,7 @@ class Pro4 extends EventEmitter
           }
           else
           {
-            logger.debug('PRO4: Invalid PRO4 ', self.request == 1 ? 'request':'response',' device ID = ', byte);
+            logger.log(`PRO4: Invalid PRO4 ${self.request == 1 ? 'request':'response'} device ID = ${byte}`);
             let cursor = self.parseBuf.readOffset;
             self.parseBuf.readOffset = 0;
             this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -701,7 +903,7 @@ class Pro4 extends EventEmitter
           }
           else
           {
-            logger.warn('PRO4: Received 255 as payload length but we don\'t support extended length packets; Dropping)');
+            logger.log('PRO4: Received 255 as payload length but we don\'t support extended length packets; Dropping)');
             let cursor = self.parseBuf.readOffset;
             self.parseBuf.readOffset = 0;
             this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -721,7 +923,7 @@ class Pro4 extends EventEmitter
             let byte = self.parseBuf.readUInt8();
             if (byte != chksum)
             {
-              logger.warn('PRO4: Bad header CRC; possible id = ' + self.parsedObj.id);
+              logger.log(`PRO4: Bad header CRC; possible id = ${self.parsedObj.id}`);
               let cursor = self.parseBuf.readOffset;
               self.parseBuf.readOffset = 0;
               this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -736,7 +938,13 @@ class Pro4 extends EventEmitter
             else
             {
               self.parsedObj.status = self.constants.STATUS_SUCCESS;
-              this.ctx.emit('parsedPacket', self.parsedObj);
+              if (returnObject === true) {
+                let copy = JSON.parse(JSON.stringify(self.parsedObj));;
+                self.reset();
+                return copy;
+              }
+              else
+                this.ctx.emit('parsedPacket', self.parsedObj);
               self.reset();
             }
           }
@@ -766,7 +974,7 @@ class Pro4 extends EventEmitter
               let calcdChksum = CRC.crc32(self.headBuf); // calculate checksum of received data
               if (calcdChksum != self.parsedObj.crcHead.readUInt32LE(0))
               {
-                logger.warn('PRO4: Bad header CRC32; possible id = ' + self.parsedObj.id);
+                logger.log(`PRO4: Bad header CRC32; possible id = ${self.parsedObj.id}`);
                 let cursor = self.parseBuf.readOffset;
                 self.parseBuf.readOffset = 0;
                 this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -778,14 +986,20 @@ class Pro4 extends EventEmitter
               else
               {
                 self.parsedObj.status = self.constants.STATUS_SUCCESS;
-                this.ctx.emit('parsedPacket', self.parsedObj);
+                if (returnObject === true) {
+                  let copy = JSON.parse(JSON.stringify(self.parsedObj));;
+                  self.reset();
+                  return copy;
+                }
+                else
+                  this.ctx.emit('parsedPacket', self.parsedObj);
                 self.reset();
               }
             }
 
             if (self.counter <= 0 || self.counter > self.parsedObj.crcHead.length) // something went awry
             {
-              logger.warn('PRO4: Something went wrong with header CRC32; possible id = ' + self.parsedObj.id);
+              logger.log(`PRO4: Something went wrong with header CRC32; possible id = ${self.parsedObj.id}`);
               let cursor = self.parseBuf.readOffset;
               self.parseBuf.readOffset = 0;
               this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -822,7 +1036,7 @@ class Pro4 extends EventEmitter
 
           if (self.counter <= 0 || self.counter > self.parsedObj.payloadLen) // something went awry
           {
-            logger.warn('PRO4: Something went wrong with payload parsing; possible id = ' + self.parsedObj.id);
+            logger.log(`PRO4: Something went wrong with payload parsing; possible id = ${self.parsedObj.id}`);
             let cursor = self.parseBuf.readOffset;
             self.parseBuf.readOffset = 0;
             this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -844,7 +1058,7 @@ class Pro4 extends EventEmitter
             let byte = self.parseBuf.readUInt8();
             if (byte != chksum)
             {
-              logger.warn('PRO4: Bad total CRC; ', chksum, 'vs ', byte, '; possible id = ' + self.parsedObj.id);
+              logger.log(`PRO4: Bad total CRC; ${chksum} vs ${byte}; possible id = ${self.parsedObj.id}`);
               let cursor = self.parseBuf.readOffset;
               self.parseBuf.readOffset = 0;
               this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -854,11 +1068,17 @@ class Pro4 extends EventEmitter
             else
             {
               // got a good full packet!  Pass it to payload parser
-              logger.debug('PRO4: Good total CRC ', self.parsedObj);
+              logger.log(`PRO4: Good total CRC ${self.parsedObj}`);
               self.parsedObj.crcTotal = byte;
               self.parsedObj.status = self.constants.STATUS_SUCCESS;
               self.parsedObj.device = await self.parsePayload();
-              this.ctx.emit('parsedPacket', self.parsedObj);
+              if (returnObject === true) {
+                let copy = JSON.parse(JSON.stringify(self.parsedObj));;
+                self.reset();
+                return copy;
+              }
+              else
+                this.ctx.emit('parsedPacket', self.parsedObj);
             }
           }
           else // 4-byte CRC
@@ -887,7 +1107,7 @@ class Pro4 extends EventEmitter
               let calcdChksum = CRC.crc32(self.parsedObj.payload); // calculate checksum of received data
               if (calcdChksum != self.parsedObj.crcTotal.readUInt32LE(0))
               {
-                logger.warn('PRO4: Bad total CRC32; possible id = ' + self.parsedObj.id);
+                logger.log(`PRO4: Bad total CRC32; possible id = ${self.parsedObj.id}`);
                 let cursor = self.parseBuf.readOffset;
                 self.parseBuf.readOffset = 0;
                 this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -896,15 +1116,21 @@ class Pro4 extends EventEmitter
               }
 
               // got a good full packet!  Pass it to payload parser
-              logger.debug('PRO4: Good total CRC32; obj = ', self.parsedObj);
+              logger.log(`PRO4: Good total CRC32; obj = ${self.parsedObj}`);
               self.parsedObj.status = self.constants.STATUS_SUCCESS;
               self.parsedObj.device = await self.parsePayload();
-              this.ctx.emit('parsedPacket', self.parsedObj);
+              if (returnObject === true) {
+                let copy = JSON.parse(JSON.stringify(self.parsedObj));;
+                self.reset();
+                return copy;
+              }
+              else
+                this.ctx.emit('parsedPacket', self.parsedObj);
             }
 
             if (self.counter <= 0 || self.counter > self.parsedObj.crcTotal.length) // something went awry
             {
-              logger.warn('PRO4: Something went wrong with total CRC32; possible id = ' + self.parsedObj.id);
+              logger.log(`PRO4: Something went wrong with total CRC32; possible id = ${self.parsedObj.id}`);
               let cursor = self.parseBuf.readOffset;
               self.parseBuf.readOffset = 0;
               this.ctx.emit('parsedPacket', {data: self.parseBuf.readBuffer(cursor), status: self.constants.STATUS_ERROR});
@@ -957,7 +1183,7 @@ class Pro4 extends EventEmitter
         chksum ^= buf[i];
       }
       buf.writeUInt8(chksum, this.constants.PROTOCOL_PRO4_HEADER_SIZE);
-      logger.debug('PRO4: My crc8 header = ' + chksum.toString(16));;
+      logger.log(`PRO4: My crc8 header = ${chksum.toString(16)}`);;
     }
 
     if (payload != 0)
@@ -978,7 +1204,7 @@ class Pro4 extends EventEmitter
           }
         }
         buf.writeUInt8(chksum, skip);
-        logger.debug('PRO4: My crc8 total = ' + chksum.toString(16));
+        logger.log(`PRO4: My crc8 total = ${chksum.toString(16)}`);
       }
     }
     else
@@ -986,7 +1212,7 @@ class Pro4 extends EventEmitter
       buf = buf.slice(0,7); // read-only zero byte PRO4 request, no need for final checksum
     }
 
-    logger.warn('PRO4: Debug PRO4 ', self.request == 1 ? 'request':'response',' encode = ' + buf.toString('hex'));
+    logger.log(`PRO4: Debug PRO4 ${self.request == 1 ? 'request':'response'} encode = ${buf.toString('hex')}`);
     return buf;
   };
 

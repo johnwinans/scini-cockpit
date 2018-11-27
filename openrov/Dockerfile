@@ -36,6 +36,7 @@ RUN apt-get update \
         nmap \
         openssh-client \
         pkg-config \
+        psmisc \
         python \
         tcpdump \
         vim \
@@ -87,6 +88,9 @@ RUN mkdir -p /etc/openrov \
     && mkdir -p /opt/openrov/logs \
     && mkdir -p /opt/openrov/images \
     && mkdir -p /opt/openrov/www \
+    && mkdir -p /opt/openrov/www-ro \
+    && mkdir -p /opt/openrov/data \
+    && mkdir -p /opt/openrov/config \
     && mkdir -p /opt/openrov/cockpit \
     && mkdir -p /usr/share/cockpit \
     && cd /opt/openrov/cockpit \
@@ -119,15 +123,20 @@ RUN cd /opt/openrov/cockpit \
     && (cd src/plugins/peer-view && npm install msgpack-lite) \
     && (cd src/plugins/mqtt-broker && npm install bonjour) \
     && (cd src/plugins/mqtt-broker && npm install mqtt) \
+    && (cd src/plugins/telemetry && npm install mqtt) \
     && (cd src/plugins/elphel-config && npm install)
 
+## Even though we bind mount over these, we want to be able to run the full
+## container standalone
 COPY www /opt/openrov/www/
+COPY www-ro /opt/openrov/www-ro/
 
 ## Let Docker know that OpenROV is listening on ports for HTTP, Node/Express, and Mosca MQTT
 EXPOSE 80
 EXPOSE 443
 EXPOSE 1883
 EXPOSE 3000
+EXPOSE 7011
 EXPOSE 8080
 EXPOSE 8200
 EXPOSE 8201

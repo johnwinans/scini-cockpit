@@ -1,0 +1,185 @@
+version: "3"
+services:
+
+  openrov:
+    image: scini/openrov:dev
+    build: openrov/
+    restart: unless-stopped
+    command: 192.168.2.215 dev
+    volumes:
+      - "images-dev:/opt/openrov/images"
+      - "logs-dev:/opt/openrov/logs"
+      - "data-dev:/opt/openrov/data"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.2
+    depends_on:
+      - fwdcam-mock
+      - downcam-mock
+      - upcam-mock
+      - sidecam-mock
+      - borecam-mock
+
+  fwdcam-mock:
+    build: imgsrv-mock/
+    restart: unless-stopped
+    environment:
+      - MQTT_INTERFACE=eth0
+      - PARTNER=192.168.2.232
+      - PORT=50000
+    expose:
+      - "1883"
+      - "3000"
+      - "8081"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.215
+    logging:
+      options:
+        max-size: "50k"
+        max-file: "10"
+    depends_on:
+      - serial-rov
+
+  downcam-mock:
+    build: imgsrv-mock/
+    restart: unless-stopped
+    environment:
+      - MQTT_INTERFACE=eth0
+    expose:
+      - "1883"
+      - "3000"
+      - "8081"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.218
+    logging:
+      options:
+        max-size: "50k"
+        max-file: "10"
+
+  upcam-mock:
+    build: imgsrv-mock/
+    restart: unless-stopped
+    environment:
+      - MQTT_INTERFACE=eth0
+    expose:
+      - "1883"
+      - "3000"
+      - "8081"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.217
+    logging:
+      options:
+        max-size: "50k"
+        max-file: "10"
+
+  borecam-mock:
+    build: imgsrv-mock/
+    restart: unless-stopped
+    environment:
+      - MQTT_INTERFACE=eth0
+    expose:
+      - "1883"
+      - "3000"
+      - "8081"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.213
+    logging:
+      options:
+        max-size: "50k"
+        max-file: "10"
+
+  sidecam-mock:
+    build: imgsrv-mock/
+    restart: unless-stopped
+    environment:
+      - MQTT_INTERFACE=eth0
+      - PARTNER=192.168.2.233
+      - PORT=50001
+    expose:
+      - "1883"
+      - "3000"
+      - "8081"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.211
+    logging:
+      options:
+        max-size: "50k"
+        max-file: "10"
+    depends_on:
+      - serial-clump
+
+  serial-rov:
+    build: serial-tester/
+    restart: unless-stopped
+    environment:
+      - NODEIDS="12 13 14 15 16 21 23 24 52 57 58 62 63 65 82 83 85 87 129 129"
+      - PORT="50000"
+    expose:
+      - "50000"
+    ports:
+      - "9222:9222"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.232
+    logging:
+      options:
+        max-size: "500k"
+        max-file: "10"
+
+  serial-clump:
+    build: serial-tester/
+    restart: unless-stopped
+    environment:
+      - NODEIDS="51 66 67 81"
+      - PORT="50001"
+    expose:
+      - "50001"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.233
+    logging:
+      options:
+        max-size: "500k"
+        max-file: "10"
+
+  file-browser:
+    restart: unless-stopped
+    volumes:
+      - "images-dev:/opt/openrov/images:ro"
+      - "logs-dev:/opt/openrov/logs:ro"
+      - "data-dev:/opt/openrov/data:ro"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.151
+
+  logger:
+    build: logger/
+    restart: unless-stopped
+    expose:
+      - "514"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.242
+
+  audio:
+    build: audio/
+    restart: unless-stopped
+    ports:
+      - "20000:20000"
+    networks:
+      scini:
+        ipv4_address: 192.168.2.243
+
+networks:
+  scini:
+    external: true
+
+volumes:
+  images-dev:
+  logs-dev:
+  data-dev:

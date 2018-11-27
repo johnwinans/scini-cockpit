@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>MJPG-Streamer - Elphel</title>
+  <link href="default.css" rel="stylesheet" type="text/css">
+  <script type="text/javascript" src="/browserMqtt.js"></script>
+  <script type="text/javascript" src="/mousetrap.min.js"></script>
+  <script type="text/javascript" src="/nav.js"></script>
+  <script type="text/javascript" src="/video-gl.js"></script>
+</head>
+
+<body onload="init()">
+  <nav>
+    <ul>
+      <li><a href="index.html">Camera</a></li>
+      <li><a href="controls.html">Controls</a></li>
+      <li><a href="telemetry.html">Telemetry</a></li>
+      <li><a href="telemetry-brief.html">Telemetry Brief</a></li>
+      <li><a href="files.html">Files</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a class="active" href="video-gl.html">WebGL Camera (Beta)</a></li>
+      <li><span class="dot" id="video-211-record"><span class="tooltiptext">Side</span></span></li>
+      <li><span class="dot" id="video-213-record"><span class="tooltiptext">Bore</span></span></li>
+      <li><span class="dot" id="video-215-record"><span class="tooltiptext">Forward</span></span></li>
+      <li><span class="dot" id="video-217-record"><span class="tooltiptext">Up</span></span></li>
+      <li><span class="dot" id="video-218-record"><span class="tooltiptext">Down</span></span></li>
+      <li><div class="clock"></div></li>
+    </ul>
+  </nav>
+  <canvas class="video-canvas"><div class="support">Your browser does not support OffscreenCanvas.</div></canvas>
+</body>
+</html>
